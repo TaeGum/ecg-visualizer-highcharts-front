@@ -11,6 +11,7 @@
   "dependencies": {
     "@tanstack/react-query": "^5.75.0",
     "highcharts": "^12.2.0",
+    "highcharts-more": "^0.1.7",
     "highcharts-react-official": "^3.2.2",
     "next": "15.3.1",
     "react": "^19.0.0",
