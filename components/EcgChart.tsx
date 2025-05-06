@@ -33,6 +33,31 @@ export default function EcgChart({ ecgData = [] }) {
     [key: string]: boolean;
   }>({});
 
+  // 편집 상태
+  const [edit, setEdit] = useState<{
+    label: string;
+    memo: string;
+    color: string;
+  }>({
+    label: "",
+    memo: "",
+    color: "#7c3aed",
+  });
+
+  // 영역 선택 시 편집 상태 초기화
+  useEffect(() => {
+    if (!activeRegionId) return;
+    const region = regions.find((r) => r.id === activeRegionId);
+    if (region) {
+      setEdit({
+        label: region.label || "",
+        memo: region.memo || "",
+        color: region.color || "#7c3aed",
+      });
+    }
+  }, [activeRegionId, regions]);
+
+  // 커스텀 핸들(세로 라인 + 본체 rect)
   useEffect(() => {
     if (!chartRef.current?.chart) return;
     const chart = chartRef.current.chart;
@@ -56,14 +81,15 @@ export default function EcgChart({ ecgData = [] }) {
 
       if (isNaN(startX) || isNaN(endX)) return;
 
-      // 해당 영역의 hover 상태만 반영
+      // 차트 상태
       const isHovered = hoveredRegions[region.id] === true;
+      const isActive = activeRegionId === region.id;
 
       // 왼쪽 끝 세로 라인 핸들 (리사이즈)
       const startHandle = renderer
         .path(["M", startX, top, "L", startX, bottom])
         .attr({
-          stroke: isHovered ? "#1976d2" : "#666",
+          stroke: isActive ? "#1976d2" : isHovered ? "#1976d2" : "#666",
           "stroke-width": isHovered ? 3 : 1,
           cursor: "ew-resize",
           zIndex: 10,
@@ -86,7 +112,7 @@ export default function EcgChart({ ecgData = [] }) {
       const endHandle = renderer
         .path(["M", endX, top, "L", endX, bottom])
         .attr({
-          stroke: isHovered ? "#1976d2" : "#666",
+          stroke: isActive ? "#1976d2" : isHovered ? "#1976d2" : "#666",
           "stroke-width": isHovered ? 3 : 1,
           cursor: "ew-resize",
           zIndex: 10,
@@ -106,16 +132,23 @@ export default function EcgChart({ ecgData = [] }) {
         .add();
 
       // 본체(영역) 드래그 핸들 (이동)
-      const rectX = Math.min(startX, endX) + 8;
-      const rectW = Math.max(0, Math.abs(endX - startX) - 16);
+      // const rectX = Math.min(startX, endX) + 8;
+      // const rectW = Math.max(0, Math.abs(endX - startX) - 16);
+      const rectX = Math.min(startX, endX);
+      const rectW = Math.abs(endX - startX);
       if (!isNaN(rectX) && !isNaN(rectW) && rectW > 0) {
         const bodyRect = renderer
           .rect(rectX, top, rectW, bottom - top, 0)
           .attr({
-            fill: isHovered ? "rgba(25, 118, 210, 0.15)" : "rgba(0,0,0,0.001)",
+            fill: isActive
+              ? region.color || "rgba(25, 118, 210, 0.45)"
+              : isHovered
+              ? region.color.replace("0.35", "0.15") ||
+                "rgba(25, 118, 210, 0.15)"
+              : "rgba(0,0,0,0.001)",
             cursor: "move",
             zIndex: 15,
-            // "stroke-width": isHovered ? 2 : 0,
+            "stroke-width": isHovered ? 2 : 0,
             // stroke: isHovered ? "#1976d2" : undefined,
           })
           .on("mousedown", (e) => {
@@ -444,25 +477,22 @@ export default function EcgChart({ ecgData = [] }) {
               ? region.end
               : MIN_REGION_WIDTH,
           y: 0,
-          color:
-            region.id === activeRegionId
-              ? "rgba(128, 0, 255, 0.5)"
-              : region.color,
+          color: region.color, // 즉시 반영!
           label: region.label,
         })),
         dataLabels: {
           enabled: true,
+          useHTML: true,
           formatter: function () {
-            return this.point.label;
+            return `<span style="
+              background: #222;
+              color: #fff;
+              padding: 3px 8px;
+              border-radius: 4px;
+              font-weight: bold;
+              font-size: 13px;
+            ">${this.point.label}</span>`;
           },
-          style: {
-            color: "#000",
-            textOutline: "none",
-            fontWeight: "bold",
-          },
-          align: "left",
-          verticalAlign: "top",
-          padding: 3,
         },
         dragDrop: {
           draggableX: false,
@@ -481,43 +511,111 @@ export default function EcgChart({ ecgData = [] }) {
   };
 
   return (
-    <div className="relative">
+    <div className="w-[900px] mx-auto flex flex-col items-center">
       <HighchartsReact
         highcharts={Highcharts}
         options={chartOptions}
         ref={chartRef}
       />
 
+      {/* 차트 아래 넓은 영역 편집 패널 */}
       {activeRegionId && (
-        <div className="absolute top-2 right-2 bg-white/90 p-2 rounded shadow-md">
-          <div className="text-sm">
-            {regions.find((r) => r.id === activeRegionId)?.label ||
-              "선택된 영역"}
+        <div className="w-full max-w-2xl mx-auto mt-4 bg-neutral-900/95 border border-neutral-700 rounded-lg shadow-lg p-6 flex flex-col gap-4">
+          <div className="flex gap-4">
+            <div className="flex-1">
+              <label className="block text-xs text-neutral-400 mb-1">
+                이름
+              </label>
+              <input
+                className="w-full bg-neutral-800 text-white rounded px-2 py-1"
+                value={edit.label}
+                onChange={(e) =>
+                  setEdit((edit) => ({ ...edit, label: e.target.value }))
+                }
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-neutral-400 mb-1">
+                색상
+              </label>
+              <input
+                type="color"
+                className="w-10 h-10 rounded border-none"
+                value={edit.color}
+                onChange={(e) =>
+                  setEdit((edit) => ({ ...edit, color: e.target.value }))
+                }
+              />
+            </div>
           </div>
-          <div className="flex space-x-2 mt-1">
-            <button
-              onClick={() => {
-                const region = regions.find((r) => r.id === activeRegionId);
-                const newLabel = prompt("영역 이름 변경", region?.label || "");
-                newLabel &&
-                  updateRegion(region.id, (prev) => ({
-                    ...prev,
-                    label: newLabel,
-                  }));
-              }}
-              className="px-2 py-1 bg-blue-500 text-white text-xs rounded hover:bg-blue-600"
-            >
-              이름 변경
-            </button>
+          <div>
+            <label className="block text-xs text-neutral-400 mb-1">
+              설명/메모
+            </label>
+            <textarea
+              className="w-full bg-neutral-800 text-white rounded px-2 py-1"
+              value={edit.memo}
+              rows={2}
+              onChange={(e) =>
+                setEdit((edit) => ({ ...edit, memo: e.target.value }))
+              }
+            />
+          </div>
+          <div className="flex gap-2 mt-2 justify-end">
             <button
               onClick={() => removeRegion(activeRegionId)}
-              className="px-2 py-1 bg-red-500 text-white text-xs rounded hover:bg-red-600"
+              className="px-3 py-2 bg-red-600 text-white rounded hover:bg-red-700 font-bold"
             >
               삭제
+            </button>
+            <button
+              onClick={() => {
+                updateRegion(activeRegionId, (prev) => ({
+                  ...prev,
+                  label: edit.label,
+                  memo: edit.memo,
+                  color: edit.color,
+                }));
+              }}
+              className="px-3 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 font-bold"
+            >
+              저장
             </button>
           </div>
         </div>
       )}
+      {/* 프로젝트 설명 */}
+      <div className="w-full max-w-2xl mx-auto mt-8 p-6 bg-neutral-800 text-neutral-100 rounded-lg shadow">
+        <h2 className="text-lg font-bold mb-2">프로젝트 설명</h2>
+        <ul className="list-disc pl-5 space-y-1 text-sm">
+          <li>
+            ECG 신호를 시각화하고, 마우스 드래그로 관심 구간(영역)을
+            생성/편집/삭제할 수 있습니다.
+          </li>
+          <li>
+            각 영역은 별도의 라벨, 색상, 설명을 저장할 수 있으며, 실시간으로
+            차트에 반영됩니다.
+          </li>
+          <li>
+            영역 이동/리사이즈/hover/선택 강조 등 고급 인터랙션을 커스텀 SVG로
+            직접 구현했습니다.
+          </li>
+          <li>
+            React, Highcharts, Zustand(상태관리) 등 최신 기술 스택을
+            활용했습니다.
+          </li>
+        </ul>
+        <div className="mt-4 text-xs text-neutral-400">
+          <b>주요 구현 포인트:</b> <br />
+          - Highcharts selection 이벤트를 활용한 드래그 기반 영역 생성
+          <br />
+          - 커스텀 핸들러(SVG path/rect)로 영역 이동 및 리사이즈
+          <br />
+          - 영역별 hover/선택 상태를 독립적으로 관리하여 UX 개선
+          <br />- 반응형 차트 및 패널 정렬, 어두운 테마 대응 등 시각적 완성도
+          향상
+        </div>
+      </div>
     </div>
   );
 }

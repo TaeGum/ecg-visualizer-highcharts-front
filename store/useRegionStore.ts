@@ -6,6 +6,7 @@ interface Region {
   end: number;
   color: string;
   label: string;
+  memo?: string; // 추가 정보 필드
 }
 
 interface RegionStore {
