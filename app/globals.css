@@ -24,3 +24,17 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* globals.css */
+.highcharts-xrange-series .highcharts-point {
+  transition: all 0.2s ease;
+}
+
+.highcharts-xrange-series .highcharts-point:hover {
+  opacity: 0.9;
+}
+
+/* 끝 라인 커서 스타일 */
+.highcharts-drag-handle {
+  cursor: col-resize !important;
+}
