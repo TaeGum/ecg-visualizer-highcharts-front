@@ -1,3 +1,7 @@
+/* eslint-disable @typescript-eslint/ban-ts-comment */
+/* eslint-disable @typescript-eslint/no-this-alias */
+/* eslint-disable @typescript-eslint/no-unused-vars */
+/* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
 import { useRef, useEffect, useState } from "react";
@@ -9,6 +13,15 @@ import "highcharts/modules/draggable-points";
 import { v4 as uuidv4 } from "uuid";
 import { useRegionStore } from "@/store/useRegionStore";
 
+interface ChartWithCustomHandles extends Highcharts.Chart {
+  customHandles?: any[];
+}
+
+type EcgChartProps = {
+  ecgData?: any[];
+  apiUrl?: string;
+};
+
 const MAJOR_TICK_COLOR = "#c7ced2";
 const MINOR_TICK_COLOR = "#e6eaec";
 const FONT_COLOR = "#8f979d";
@@ -17,7 +30,7 @@ const HEIGHT = WIDTH * 0.12 + 15;
 const LINE_WIDTH = 1;
 const MIN_REGION_WIDTH = 50;
 
-export default function EcgChart({ ecgData = [] }) {
+export default function EcgChart({ ecgData = [], apiUrl }: EcgChartProps) {
   const chartRef = useRef<HighchartsReact.RefObject>(null);
   const {
     regions,
@@ -60,7 +73,7 @@ export default function EcgChart({ ecgData = [] }) {
   // 커스텀 핸들(세로 라인 + 본체 rect)
   useEffect(() => {
     if (!chartRef.current?.chart) return;
-    const chart = chartRef.current.chart;
+    const chart = chartRef.current.chart as ChartWithCustomHandles;
     chart.customHandles?.forEach((handle: any) => handle.destroy());
     chart.customHandles = [];
 
@@ -87,7 +100,14 @@ export default function EcgChart({ ecgData = [] }) {
 
       // 왼쪽 끝 세로 라인 핸들 (리사이즈)
       const startHandle = renderer
-        .path(["M", startX, top, "L", startX, bottom])
+        .path([
+          "M",
+          startX,
+          top,
+          "L",
+          startX,
+          bottom,
+        ] as unknown as Highcharts.SVGPathArray)
         .attr({
           stroke: isActive ? "#1976d2" : isHovered ? "#1976d2" : "#666",
           "stroke-width": isHovered ? 3 : 1,
@@ -110,7 +130,14 @@ export default function EcgChart({ ecgData = [] }) {
 
       // 오른쪽 끝 세로 라인 핸들 (리사이즈)
       const endHandle = renderer
-        .path(["M", endX, top, "L", endX, bottom])
+        .path([
+          "M",
+          endX,
+          top,
+          "L",
+          endX,
+          bottom,
+        ] as unknown as Highcharts.SVGPathArray)
         .attr({
           stroke: isActive ? "#1976d2" : isHovered ? "#1976d2" : "#666",
           "stroke-width": isHovered ? 3 : 1,
@@ -234,7 +261,7 @@ export default function EcgChart({ ecgData = [] }) {
       const normalizedEvent = chart.pointer.normalize(moveEvent);
       const deltaX = normalizedEvent.chartX - startX;
       const valuePerPixel =
-        (chart.xAxis[0].max - chart.xAxis[0].min) / chart.xAxis[0].width;
+        (chart.xAxis[0].max - chart.xAxis[0].min) / chart.xAxis[0].len;
 
       let newStart = initialStart + deltaX * valuePerPixel;
       let newEnd = newStart + regionWidth;
@@ -282,6 +309,7 @@ export default function EcgChart({ ecgData = [] }) {
       style: { fontFamily: "NotoSansKR" },
       plotBorderColor: MAJOR_TICK_COLOR,
       plotBorderWidth: 0,
+      // @ts-expect-error
       zoomType: "x",
       events: {
         selection: function (event) {
@@ -324,7 +352,7 @@ export default function EcgChart({ ecgData = [] }) {
               "V",
               chartHeight,
               "Z",
-            ])
+            ] as unknown as Highcharts.SVGPathArray)
             .attr({
               "stroke-width": 1,
               stroke: MAJOR_TICK_COLOR,
@@ -429,7 +457,7 @@ export default function EcgChart({ ecgData = [] }) {
           color: FONT_COLOR,
         },
         formatter: function () {
-          return this.value !== 2500 ? `${this.value / 250}s` : "";
+          return this.value !== 2500 ? `${Number(this.value) / 250}s` : "";
         },
       },
     },
@@ -442,6 +470,7 @@ export default function EcgChart({ ecgData = [] }) {
         tickColor: MINOR_TICK_COLOR,
         gridLineColor: MINOR_TICK_COLOR,
         gridLineWidth: 0,
+        // @ts-expect-error
         title: { enabled: false },
         labels: { padding: 0, enabled: false },
       },
@@ -491,12 +520,15 @@ export default function EcgChart({ ecgData = [] }) {
               border-radius: 4px;
               font-weight: bold;
               font-size: 13px;
-            ">${this.point.label}</span>`;
+            ">
+            ${(this as any).point.label}
+            </span>`;
           },
         },
         dragDrop: {
           draggableX: false,
           draggableX2: false,
+          // @ts-expect-error
           draggable: false,
         },
         zIndex: 1,
