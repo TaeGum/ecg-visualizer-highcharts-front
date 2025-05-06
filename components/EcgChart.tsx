@@ -4,7 +4,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
-import { useRef, useEffect, useState } from "react";
+import { useRef, useEffect, useState, useMemo } from "react";
 import Highcharts from "highcharts";
 import HighchartsReact from "highcharts-react-official";
 import "highcharts/highcharts-more";
@@ -12,6 +12,7 @@ import "highcharts/modules/xrange";
 import "highcharts/modules/draggable-points";
 import { v4 as uuidv4 } from "uuid";
 import { useRegionStore } from "@/store/useRegionStore";
+import { useEcgData } from "@/hooks/useEcgData";
 
 interface ChartWithCustomHandles extends Highcharts.Chart {
   customHandles?: any[];
@@ -30,7 +31,7 @@ const HEIGHT = WIDTH * 0.12 + 15;
 const LINE_WIDTH = 1;
 const MIN_REGION_WIDTH = 50;
 
-export default function EcgChart({ ecgData = [], apiUrl }: EcgChartProps) {
+export default function EcgChart({ apiUrl }: EcgChartProps) {
   const chartRef = useRef<HighchartsReact.RefObject>(null);
   const {
     regions,
@@ -40,6 +41,268 @@ export default function EcgChart({ ecgData = [], apiUrl }: EcgChartProps) {
     removeRegion,
     setActiveRegionId,
   } = useRegionStore();
+
+  // fetch Ecg data from API
+  const { data: apiResponse } = useEcgData(apiUrl);
+  const ecgData = useMemo(
+    () => apiResponse?.data || [],
+    [apiResponse?.data] // ✅ apiResponse.data가 실제로 변경될 때만 재계산
+  );
+
+  const formattedData = useMemo(() => {
+    if (!ecgData || !Array.isArray(ecgData)) {
+      // API 데이터 없을 때 더미 데이터 생성
+      return Array.from({ length: 2500 }, (_, i) => [
+        i,
+        Math.sin(i / 100) * 1.2 + Math.random() * 0.2,
+      ]);
+    }
+    return ecgData.map((d, idx) => [idx, d.amplitude]);
+  }, [ecgData]);
+
+  // 차트 옵션을 state로 관리
+  const chartOptions = useMemo<Highcharts.Options>(
+    () => ({
+      chart: {
+        width: WIDTH,
+        height: HEIGHT,
+        margin: [LINE_WIDTH + 2, LINE_WIDTH, LINE_WIDTH + 15, LINE_WIDTH],
+        style: { fontFamily: "NotoSansKR" },
+        plotBorderColor: MAJOR_TICK_COLOR,
+        plotBorderWidth: 0,
+        zoomType: "x",
+        events: {
+          selection: function (event) {
+            if (!event.xAxis?.[0]) return false;
+            const [xMin, xMax] = [event.xAxis[0].min, event.xAxis[0].max];
+            if (xMax - xMin < MIN_REGION_WIDTH) return false;
+
+            addRegion({
+              id: uuidv4(),
+              start: xMin,
+              end: xMax,
+              color: "rgba(128, 0, 128, 0.35)",
+              label: "new region",
+            });
+            return false;
+          },
+          load: function () {
+            const chart = this;
+            const chartHeight = chart.chartHeight - 15;
+            chart.renderer
+              .path([
+                "M",
+                0,
+                1 / 2 + 1 * 2,
+                "H",
+                chart.chartWidth,
+                "M",
+                0,
+                chartHeight - 1 / 2,
+                "H",
+                chart.chartWidth,
+                "M",
+                1 / 2,
+                1 * 2,
+                "V",
+                chartHeight,
+                "M",
+                chart.chartWidth - 1 / 2,
+                1 * 2,
+                "V",
+                chartHeight,
+                "Z",
+              ] as unknown as Highcharts.SVGPathArray)
+              .attr({
+                "stroke-width": 1,
+                stroke: MAJOR_TICK_COLOR,
+                zIndex: 2,
+              })
+              .add();
+
+            const yInterval = (chartHeight - 1 * 3) / 6;
+            const minorYPath = [];
+            for (let i = 1; i < 6; i++) {
+              minorYPath.push(
+                "M",
+                0,
+                1 / 2 + 1 * 2 + i * yInterval,
+                "H",
+                chart.chartWidth
+              );
+            }
+            chart.renderer
+              .path(minorYPath.concat("z"))
+              .attr({
+                "stroke-width": 1,
+                stroke: MINOR_TICK_COLOR,
+              })
+              .add();
+
+            const xInterval = (chart.chartWidth - 1) / 50;
+            const minorXPath = [];
+            const majorXPath = [];
+            for (let i = 1; i < 50; i++) {
+              if (i % 5 !== 0) {
+                minorXPath.push(
+                  "M",
+                  1 / 2 + i * xInterval,
+                  1 * 2,
+                  "V",
+                  chartHeight
+                );
+              }
+            }
+            for (let i = 0; i < 51; i++) {
+              if (i % 5 === 0) {
+                majorXPath.push(
+                  "M",
+                  1 / 2 + i * xInterval,
+                  1 * 2,
+                  "V",
+                  chartHeight + 14
+                );
+              }
+            }
+            chart.renderer
+              .path(minorXPath.concat("z"))
+              .attr({
+                "stroke-width": 1,
+                stroke: MINOR_TICK_COLOR,
+              })
+              .add();
+            chart.renderer
+              .path(majorXPath.concat("z"))
+              .attr({
+                "stroke-width": 1,
+                stroke: MAJOR_TICK_COLOR,
+              })
+              .add();
+
+            chart.renderer.boxWrapper.attr({ preserveAspectRatio: "none" });
+            chart.reflow();
+          },
+        },
+      },
+      boost: { useGPUTranslations: true },
+      title: { text: "" },
+      tooltip: { enabled: false },
+      legend: { enabled: false },
+      credits: { enabled: false },
+      exporting: { enabled: false },
+      xAxis: {
+        minPadding: 0,
+        max: 2500,
+        tickPosition: "outside",
+        tickmarkPlacement: "on",
+        tickLength: 15,
+        tickWidth: 0,
+        tickColor: MAJOR_TICK_COLOR,
+        tickInterval: 250,
+        minorTickInterval: 50,
+        minorTickColor: MINOR_TICK_COLOR,
+        lineColor: MAJOR_TICK_COLOR,
+        gridLineColor: MAJOR_TICK_COLOR,
+        gridLineWidth: 0,
+        minorGridLineWidth: 0,
+        labels: {
+          enabled: true,
+          padding: 0,
+          x: 9,
+          y: 14,
+          style: {
+            fontSize: "11px",
+            lineHeight: "13px",
+            fill: FONT_COLOR,
+            color: FONT_COLOR,
+          },
+          formatter: function () {
+            return this.value !== 2500 ? `${Number(this.value) / 250}s` : "";
+          },
+        },
+      },
+      yAxis: [
+        {
+          min: -2,
+          max: 2,
+          tickmarkPlacement: "on",
+          tickAmount: 7,
+          tickColor: MINOR_TICK_COLOR,
+          gridLineColor: MINOR_TICK_COLOR,
+          gridLineWidth: 0,
+          // @ts-expect-error
+          title: { enabled: false },
+          labels: { padding: 0, enabled: false },
+        },
+      ],
+      series: [
+        {
+          type: "line",
+          // data:
+          //   ecgData.length > 0
+          //     ? ecgData
+          //     : Array.from({ length: 2500 }, (_, i) => [
+          //         i,
+          //         Math.sin(i / 100) * 1.2 + Math.random() * 0.2,
+          //       ]),
+          data: formattedData,
+          lineWidth: 1,
+          color: "#ff0000",
+          pointPlacement: "on",
+          zIndex: 2,
+        },
+        {
+          type: "xrange",
+          pointWidth: 100,
+          borderColor: "transparent",
+          cursor: "pointer",
+          data: regions.map((region) => ({
+            id: region.id,
+            x:
+              typeof region.start === "number" && !isNaN(region.start)
+                ? region.start
+                : 0,
+            x2:
+              typeof region.end === "number" && !isNaN(region.end)
+                ? region.end
+                : MIN_REGION_WIDTH,
+            y: 0,
+            color: region.color, // 즉시 반영!
+            label: region.label,
+          })),
+          dataLabels: {
+            enabled: true,
+            useHTML: true,
+            formatter: function () {
+              return `<span style="
+                background: #222;
+                color: #fff;
+                padding: 3px 8px;
+                border-radius: 4px;
+                font-weight: bold;
+                font-size: 13px;
+              ">
+              ${(this as any).point.label}
+              </span>`;
+            },
+          },
+          dragDrop: {
+            draggableX: false,
+            draggableX2: false,
+            draggable: false,
+          },
+          zIndex: 1,
+        },
+      ],
+      plotOptions: {
+        series: {
+          animation: false,
+          marker: { enabled: false },
+        },
+      },
+    }),
+    [addRegion, formattedData, regions]
+  );
 
   // 각 영역별 hover 상태를 객체로 관리
   const [hoveredRegions, setHoveredRegions] = useState<{
@@ -56,6 +319,83 @@ export default function EcgChart({ ecgData = [], apiUrl }: EcgChartProps) {
     memo: "",
     color: "#7c3aed",
   });
+
+  // 데이터가 바뀌면 차트 옵션의 series를 갱신
+  // useEffect(() => {
+  //   const chart = chartRef.current?.chart;
+  //   if (!chart) return;
+
+  //   // console.log("chart", chart);
+  //   console.log("formattedData", formattedData);
+
+  //   if (formattedData.length === 0) return;
+
+  //   setChartOptions(() => ({
+  //     ...chartOptions,
+  //     series: [
+  //       {
+  //         type: "line",
+  //         // data:
+  //         //   ecgData.length > 0
+  //         //     ? ecgData
+  //         //     : Array.from({ length: 2500 }, (_, i) => [
+  //         //         i,
+  //         //         Math.sin(i / 100) * 1.2 + Math.random() * 0.2,
+  //         //       ]),
+  //         // data:
+  //         //   ecgData.length > 0
+  //         //     ? ecgData.map((d) => [d.time, d.amplitude])
+  //         //     : Array.from({ length: 2500 }, (_, i) => [
+  //         //         i,
+  //         //         Math.sin(i / 100) * 1.2 + Math.random() * 0.2,
+  //         //       ]),
+  //         data: formattedData,
+  //         color: "#ff0000",
+  //         lineWidth: 1,
+  //       },
+  //       {
+  //         type: "xrange",
+  //         pointWidth: 100,
+  //         borderColor: "transparent",
+  //         cursor: "pointer",
+  //         data: regions.map((region) => ({
+  //           id: region.id,
+  //           x:
+  //             typeof region.start === "number" && !isNaN(region.start)
+  //               ? region.start
+  //               : 0,
+  //           x2:
+  //             typeof region.end === "number" && !isNaN(region.end)
+  //               ? region.end
+  //               : MIN_REGION_WIDTH,
+  //           y: 0,
+  //           color: region.color,
+  //           label: region.label,
+  //         })),
+  //         dataLabels: {
+  //           enabled: true,
+  //           useHTML: true,
+  //           formatter: function () {
+  //             return `<span style="
+  //               background: #222;
+  //               color: #fff;
+  //               padding: 3px 8px;
+  //               border-radius: 4px;
+  //               font-weight: bold;
+  //               font-size: 13px;
+  //             ">${(this as any).point.label}</span>`;
+  //           },
+  //         },
+  //         dragDrop: {
+  //           draggableX: false,
+  //           draggableX2: false,
+  //           draggable: false,
+  //         },
+  //         zIndex: 1,
+  //       },
+  //     ],
+  //   }));
+  // }, [chartOptions, formattedData, regions]);
 
   // 영역 선택 시 편집 상태 초기화
   useEffect(() => {
@@ -196,18 +536,28 @@ export default function EcgChart({ ecgData = [], apiUrl }: EcgChartProps) {
     });
   }, [regions, chartRef.current?.chart, hoveredRegions]);
 
+  // useEffect 클린업 추가
+  useEffect(() => {
+    const chart = chartRef.current?.chart as ChartWithCustomHandles;
+    return () => {
+      // 차트 언마운트 시 커스텀 핸들러 제거
+      chart?.customHandles?.forEach((handle) => handle.destroy());
+    };
+  }, []);
+
   // 리사이즈 핸들 드래그
   const handleDragStart = (e: any, region: any, type: "start" | "end") => {
     e.stopPropagation();
     e.preventDefault();
     const chart = chartRef.current?.chart;
-    if (!chart) return;
+    if (!chart || !chart.pointer) return; // pointer가 없으면 중단
     setActiveRegionId(region.id);
 
     const normalizedStart = chart.pointer.normalize(e);
     const startX = normalizedStart.chartX;
 
     const mouseMoveHandler = (moveEvent: any) => {
+      if (!chart || !chart.pointer) return;
       const normalizedEvent = chart.pointer.normalize(moveEvent);
       const newX = chart.xAxis[0].toValue(normalizedEvent.chartX);
 
@@ -247,7 +597,7 @@ export default function EcgChart({ ecgData = [], apiUrl }: EcgChartProps) {
     e.stopPropagation();
     e.preventDefault();
     const chart = chartRef.current?.chart;
-    if (!chart) return;
+    if (!chart || !chart.pointer) return; // pointer가 없으면 중단
     setActiveRegionId(region.id);
 
     const normalizedStart = chart.pointer.normalize(e);
@@ -258,6 +608,7 @@ export default function EcgChart({ ecgData = [], apiUrl }: EcgChartProps) {
     const regionWidth = initialEnd - initialStart;
 
     const mouseMoveHandler = (moveEvent: any) => {
+      if (!chart || !chart.pointer) return;
       const normalizedEvent = chart.pointer.normalize(moveEvent);
       const deltaX = normalizedEvent.chartX - startX;
       const valuePerPixel =
@@ -301,246 +652,247 @@ export default function EcgChart({ ecgData = [], apiUrl }: EcgChartProps) {
   };
 
   // 드래그로 영역 생성 (줌 대신)
-  const chartOptions: Highcharts.Options = {
-    chart: {
-      width: WIDTH,
-      height: HEIGHT,
-      margin: [LINE_WIDTH + 2, LINE_WIDTH, LINE_WIDTH + 15, LINE_WIDTH],
-      style: { fontFamily: "NotoSansKR" },
-      plotBorderColor: MAJOR_TICK_COLOR,
-      plotBorderWidth: 0,
-      // @ts-expect-error
-      zoomType: "x",
-      events: {
-        selection: function (event) {
-          if (!event.xAxis?.[0]) return false;
-          const [xMin, xMax] = [event.xAxis[0].min, event.xAxis[0].max];
-          if (xMax - xMin < MIN_REGION_WIDTH) return false;
+  // const chartOptions: Highcharts.Options ={
+  //   chart: {
+  //     width: WIDTH,
+  //     height: HEIGHT,
+  //     margin: [LINE_WIDTH + 2, LINE_WIDTH, LINE_WIDTH + 15, LINE_WIDTH],
+  //     style: { fontFamily: "NotoSansKR" },
+  //     plotBorderColor: MAJOR_TICK_COLOR,
+  //     plotBorderWidth: 0,
+  //     // @ts-expect-error
+  //     zoomType: "x",
+  //     events: {
+  //       selection: function (event) {
+  //         if (!event.xAxis?.[0]) return false;
+  //         const [xMin, xMax] = [event.xAxis[0].min, event.xAxis[0].max];
+  //         if (xMax - xMin < MIN_REGION_WIDTH) return false;
 
-          addRegion({
-            id: uuidv4(),
-            start: xMin,
-            end: xMax,
-            color: "rgba(128, 0, 128, 0.35)",
-            label: "new region",
-          });
-          return false;
-        },
-        load: function () {
-          const chart = this;
-          const chartHeight = chart.chartHeight - 15;
-          chart.renderer
-            .path([
-              "M",
-              0,
-              1 / 2 + 1 * 2,
-              "H",
-              chart.chartWidth,
-              "M",
-              0,
-              chartHeight - 1 / 2,
-              "H",
-              chart.chartWidth,
-              "M",
-              1 / 2,
-              1 * 2,
-              "V",
-              chartHeight,
-              "M",
-              chart.chartWidth - 1 / 2,
-              1 * 2,
-              "V",
-              chartHeight,
-              "Z",
-            ] as unknown as Highcharts.SVGPathArray)
-            .attr({
-              "stroke-width": 1,
-              stroke: MAJOR_TICK_COLOR,
-              zIndex: 2,
-            })
-            .add();
+  //         addRegion({
+  //           id: uuidv4(),
+  //           start: xMin,
+  //           end: xMax,
+  //           color: "rgba(128, 0, 128, 0.35)",
+  //           label: "new region",
+  //         });
+  //         return false;
+  //       },
+  //       load: function () {
+  //         const chart = this;
+  //         const chartHeight = chart.chartHeight - 15;
+  //         chart.renderer
+  //           .path([
+  //             "M",
+  //             0,
+  //             1 / 2 + 1 * 2,
+  //             "H",
+  //             chart.chartWidth,
+  //             "M",
+  //             0,
+  //             chartHeight - 1 / 2,
+  //             "H",
+  //             chart.chartWidth,
+  //             "M",
+  //             1 / 2,
+  //             1 * 2,
+  //             "V",
+  //             chartHeight,
+  //             "M",
+  //             chart.chartWidth - 1 / 2,
+  //             1 * 2,
+  //             "V",
+  //             chartHeight,
+  //             "Z",
+  //           ] as unknown as Highcharts.SVGPathArray)
+  //           .attr({
+  //             "stroke-width": 1,
+  //             stroke: MAJOR_TICK_COLOR,
+  //             zIndex: 2,
+  //           })
+  //           .add();
 
-          const yInterval = (chartHeight - 1 * 3) / 6;
-          const minorYPath = [];
-          for (let i = 1; i < 6; i++) {
-            minorYPath.push(
-              "M",
-              0,
-              1 / 2 + 1 * 2 + i * yInterval,
-              "H",
-              chart.chartWidth
-            );
-          }
-          chart.renderer
-            .path(minorYPath.concat("z"))
-            .attr({
-              "stroke-width": 1,
-              stroke: MINOR_TICK_COLOR,
-            })
-            .add();
+  //         const yInterval = (chartHeight - 1 * 3) / 6;
+  //         const minorYPath = [];
+  //         for (let i = 1; i < 6; i++) {
+  //           minorYPath.push(
+  //             "M",
+  //             0,
+  //             1 / 2 + 1 * 2 + i * yInterval,
+  //             "H",
+  //             chart.chartWidth
+  //           );
+  //         }
+  //         chart.renderer
+  //           .path(minorYPath.concat("z"))
+  //           .attr({
+  //             "stroke-width": 1,
+  //             stroke: MINOR_TICK_COLOR,
+  //           })
+  //           .add();
 
-          const xInterval = (chart.chartWidth - 1) / 50;
-          const minorXPath = [];
-          const majorXPath = [];
-          for (let i = 1; i < 50; i++) {
-            if (i % 5 !== 0) {
-              minorXPath.push(
-                "M",
-                1 / 2 + i * xInterval,
-                1 * 2,
-                "V",
-                chartHeight
-              );
-            }
-          }
-          for (let i = 0; i < 51; i++) {
-            if (i % 5 === 0) {
-              majorXPath.push(
-                "M",
-                1 / 2 + i * xInterval,
-                1 * 2,
-                "V",
-                chartHeight + 14
-              );
-            }
-          }
-          chart.renderer
-            .path(minorXPath.concat("z"))
-            .attr({
-              "stroke-width": 1,
-              stroke: MINOR_TICK_COLOR,
-            })
-            .add();
-          chart.renderer
-            .path(majorXPath.concat("z"))
-            .attr({
-              "stroke-width": 1,
-              stroke: MAJOR_TICK_COLOR,
-            })
-            .add();
+  //         const xInterval = (chart.chartWidth - 1) / 50;
+  //         const minorXPath = [];
+  //         const majorXPath = [];
+  //         for (let i = 1; i < 50; i++) {
+  //           if (i % 5 !== 0) {
+  //             minorXPath.push(
+  //               "M",
+  //               1 / 2 + i * xInterval,
+  //               1 * 2,
+  //               "V",
+  //               chartHeight
+  //             );
+  //           }
+  //         }
+  //         for (let i = 0; i < 51; i++) {
+  //           if (i % 5 === 0) {
+  //             majorXPath.push(
+  //               "M",
+  //               1 / 2 + i * xInterval,
+  //               1 * 2,
+  //               "V",
+  //               chartHeight + 14
+  //             );
+  //           }
+  //         }
+  //         chart.renderer
+  //           .path(minorXPath.concat("z"))
+  //           .attr({
+  //             "stroke-width": 1,
+  //             stroke: MINOR_TICK_COLOR,
+  //           })
+  //           .add();
+  //         chart.renderer
+  //           .path(majorXPath.concat("z"))
+  //           .attr({
+  //             "stroke-width": 1,
+  //             stroke: MAJOR_TICK_COLOR,
+  //           })
+  //           .add();
 
-          chart.renderer.boxWrapper.attr({ preserveAspectRatio: "none" });
-          chart.reflow();
-        },
-      },
-    },
-    boost: { useGPUTranslations: true },
-    title: { text: "" },
-    tooltip: { enabled: false },
-    legend: { enabled: false },
-    credits: { enabled: false },
-    exporting: { enabled: false },
-    xAxis: {
-      minPadding: 0,
-      max: 2500,
-      tickPosition: "outside",
-      tickmarkPlacement: "on",
-      tickLength: 15,
-      tickWidth: 0,
-      tickColor: MAJOR_TICK_COLOR,
-      tickInterval: 250,
-      minorTickInterval: 50,
-      minorTickColor: MINOR_TICK_COLOR,
-      lineColor: MAJOR_TICK_COLOR,
-      gridLineColor: MAJOR_TICK_COLOR,
-      gridLineWidth: 0,
-      minorGridLineWidth: 0,
-      labels: {
-        enabled: true,
-        padding: 0,
-        x: 9,
-        y: 14,
-        style: {
-          fontSize: "11px",
-          lineHeight: "13px",
-          fill: FONT_COLOR,
-          color: FONT_COLOR,
-        },
-        formatter: function () {
-          return this.value !== 2500 ? `${Number(this.value) / 250}s` : "";
-        },
-      },
-    },
-    yAxis: [
-      {
-        min: -2,
-        max: 2,
-        tickmarkPlacement: "on",
-        tickAmount: 7,
-        tickColor: MINOR_TICK_COLOR,
-        gridLineColor: MINOR_TICK_COLOR,
-        gridLineWidth: 0,
-        // @ts-expect-error
-        title: { enabled: false },
-        labels: { padding: 0, enabled: false },
-      },
-    ],
-    series: [
-      {
-        type: "line",
-        data:
-          ecgData.length > 0
-            ? ecgData
-            : Array.from({ length: 2500 }, (_, i) => [
-                i,
-                Math.sin(i / 100) * 1.2 + Math.random() * 0.2,
-              ]),
-        lineWidth: 1,
-        color: "#ff0000",
-        pointPlacement: "on",
-        zIndex: 2,
-      },
-      {
-        type: "xrange",
-        pointWidth: 100,
-        borderColor: "transparent",
-        cursor: "pointer",
-        data: regions.map((region) => ({
-          id: region.id,
-          x:
-            typeof region.start === "number" && !isNaN(region.start)
-              ? region.start
-              : 0,
-          x2:
-            typeof region.end === "number" && !isNaN(region.end)
-              ? region.end
-              : MIN_REGION_WIDTH,
-          y: 0,
-          color: region.color, // 즉시 반영!
-          label: region.label,
-        })),
-        dataLabels: {
-          enabled: true,
-          useHTML: true,
-          formatter: function () {
-            return `<span style="
-              background: #222;
-              color: #fff;
-              padding: 3px 8px;
-              border-radius: 4px;
-              font-weight: bold;
-              font-size: 13px;
-            ">
-            ${(this as any).point.label}
-            </span>`;
-          },
-        },
-        dragDrop: {
-          draggableX: false,
-          draggableX2: false,
-          // @ts-expect-error
-          draggable: false,
-        },
-        zIndex: 1,
-      },
-    ],
-    plotOptions: {
-      series: {
-        animation: false,
-        marker: { enabled: false },
-      },
-    },
-  };
+  //         chart.renderer.boxWrapper.attr({ preserveAspectRatio: "none" });
+  //         chart.reflow();
+  //       },
+  //     },
+  //   },
+  //   boost: { useGPUTranslations: true },
+  //   title: { text: "" },
+  //   tooltip: { enabled: false },
+  //   legend: { enabled: false },
+  //   credits: { enabled: false },
+  //   exporting: { enabled: false },
+  //   xAxis: {
+  //     minPadding: 0,
+  //     max: 2500,
+  //     tickPosition: "outside",
+  //     tickmarkPlacement: "on",
+  //     tickLength: 15,
+  //     tickWidth: 0,
+  //     tickColor: MAJOR_TICK_COLOR,
+  //     tickInterval: 250,
+  //     minorTickInterval: 50,
+  //     minorTickColor: MINOR_TICK_COLOR,
+  //     lineColor: MAJOR_TICK_COLOR,
+  //     gridLineColor: MAJOR_TICK_COLOR,
+  //     gridLineWidth: 0,
+  //     minorGridLineWidth: 0,
+  //     labels: {
+  //       enabled: true,
+  //       padding: 0,
+  //       x: 9,
+  //       y: 14,
+  //       style: {
+  //         fontSize: "11px",
+  //         lineHeight: "13px",
+  //         fill: FONT_COLOR,
+  //         color: FONT_COLOR,
+  //       },
+  //       formatter: function () {
+  //         return this.value !== 2500 ? `${Number(this.value) / 250}s` : "";
+  //       },
+  //     },
+  //   },
+  //   yAxis: [
+  //     {
+  //       min: -2,
+  //       max: 2,
+  //       tickmarkPlacement: "on",
+  //       tickAmount: 7,
+  //       tickColor: MINOR_TICK_COLOR,
+  //       gridLineColor: MINOR_TICK_COLOR,
+  //       gridLineWidth: 0,
+  //       // @ts-expect-error
+  //       title: { enabled: false },
+  //       labels: { padding: 0, enabled: false },
+  //     },
+  //   ],
+  //   series: [
+  //     {
+  //       type: "line",
+  //       // data:
+  //       //   ecgData.length > 0
+  //       //     ? ecgData
+  //       //     : Array.from({ length: 2500 }, (_, i) => [
+  //       //         i,
+  //       //         Math.sin(i / 100) * 1.2 + Math.random() * 0.2,
+  //       //       ]),
+  //       data: ecgData.length > 0 ? ecgData : "",
+  //       lineWidth: 1,
+  //       color: "#ff0000",
+  //       pointPlacement: "on",
+  //       zIndex: 2,
+  //     },
+  //     {
+  //       type: "xrange",
+  //       pointWidth: 100,
+  //       borderColor: "transparent",
+  //       cursor: "pointer",
+  //       data: regions.map((region) => ({
+  //         id: region.id,
+  //         x:
+  //           typeof region.start === "number" && !isNaN(region.start)
+  //             ? region.start
+  //             : 0,
+  //         x2:
+  //           typeof region.end === "number" && !isNaN(region.end)
+  //             ? region.end
+  //             : MIN_REGION_WIDTH,
+  //         y: 0,
+  //         color: region.color, // 즉시 반영!
+  //         label: region.label,
+  //       })),
+  //       dataLabels: {
+  //         enabled: true,
+  //         useHTML: true,
+  //         formatter: function () {
+  //           return `<span style="
+  //             background: #222;
+  //             color: #fff;
+  //             padding: 3px 8px;
+  //             border-radius: 4px;
+  //             font-weight: bold;
+  //             font-size: 13px;
+  //           ">
+  //           ${(this as any).point.label}
+  //           </span>`;
+  //         },
+  //       },
+  //       dragDrop: {
+  //         draggableX: false,
+  //         draggableX2: false,
+  //         // @ts-expect-error
+  //         draggable: false,
+  //       },
+  //       zIndex: 1,
+  //     },
+  //   ],
+  //   plotOptions: {
+  //     series: {
+  //       animation: false,
+  //       marker: { enabled: false },
+  //     },
+  //   },
+  // };
 
   return (
     <div className="w-[900px] mx-auto flex flex-col items-center">
@@ -548,6 +900,8 @@ export default function EcgChart({ ecgData = [], apiUrl }: EcgChartProps) {
         highcharts={Highcharts}
         options={chartOptions}
         ref={chartRef}
+        // oneToOne={true}
+        // immutable={true}
       />
 
       {/* 차트 아래 넓은 영역 편집 패널 */}
@@ -633,10 +987,31 @@ export default function EcgChart({ ecgData = [], apiUrl }: EcgChartProps) {
             직접 구현했습니다.
           </li>
           <li>
-            React, Highcharts, Zustand(상태관리) 등 최신 기술 스택을
+            Next.js, TanStack Query, Zustand, Highcharts 등 최신 기술 스택을
             활용했습니다.
           </li>
         </ul>
+
+        <div className="mt-4 text-xs text-neutral-400">
+          <b>프론트엔드 구성:</b> <br />
+          - 프레임워크: Next.js (React 기반)
+          <br />
+          - 상태 관리: Zustand를 활용한 전역 상태 관리
+          <br />
+          - 데이터 페칭: TanStack Query v5로 API 데이터 요청 및 캐싱
+          <br />- 시각화 도구: Highcharts로 ECG 데이터 차트 구현
+        </div>
+
+        <div className="mt-4 text-xs text-neutral-400">
+          <b>백엔드 구성:</b> <br />
+          - 프레임워크: FastAPI (Python)
+          <br />
+          - 데이터 처리: NumPy로 ECG 신호 데이터 생성 및 가공
+          <br />
+          - 배포 환경: Docker 컨테이너화 및 AWS EC2 배포
+          <br />- API 엔드포인트: 초당 250Hz 샘플링의 고해상도 ECG 데이터 제공
+        </div>
+
         <div className="mt-4 text-xs text-neutral-400">
           <b>주요 구현 포인트:</b> <br />
           - Highcharts selection 이벤트를 활용한 드래그 기반 영역 생성
